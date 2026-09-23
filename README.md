@@ -213,7 +213,7 @@ CST 消息窗口同时会显示带 `MacroMsg [INFO] / [WARN] / [ERROR] / [CRIT]`
 本项目以 **MIT License** 发布，全文见 [LICENSE](LICENSE)。
 
 ```
-Copyright (c) 2026 她与梦 (She and Me)
+Copyright (c) 2026 Limorazp
 ```
 
 在保留版权与许可声明的前提下，你可以自由使用、修改、分发本项目，**包括商业用途**（这也是我选择 MIT 的原因）。

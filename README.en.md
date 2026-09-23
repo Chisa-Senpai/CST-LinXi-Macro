@@ -254,7 +254,7 @@ Issues and pull requests are welcome (Chinese templates live under `.gitee/`).
 Released under the **MIT License** — see [LICENSE](LICENSE).
 
 ```
-Copyright (c) 2026 她与梦 (She and Me)
+Copyright (c) 2026 Limorazp
 ```
 
 You may use, modify and redistribute this software, **including commercially**, as long
