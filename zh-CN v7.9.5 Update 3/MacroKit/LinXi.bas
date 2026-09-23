@@ -570,17 +570,17 @@ Private Sub InitializationPhase()
     ' 周期方向的参考坐标 = 计算域中心 (避免 -0 写入参数)
     Select Case g_sDirLabel
         Case "X"
-            StoreParameter "Kc_RefPos_x", IIf(0.5 * (g_cMin(g_iDir) + g_cMax(g_iDir)) < 1e-12, 0, 0.5 * (g_cMin(g_iDir) + g_cMax(g_iDir)))
+            StoreParameter "Kc_RefPos_x", IIf(Abs(0.5 * (g_cMin(g_iDir) + g_cMax(g_iDir))) < 1e-12, 0, 0.5 * (g_cMin(g_iDir) + g_cMax(g_iDir)))
             SetParameterDescription "Kc_RefPos_x", "耦合阻抗参考位置的X坐标, 周期方向"
             SetParameterDescription "Kc_RefPos_y", "耦合阻抗参考位置的Y坐标"
             SetParameterDescription "Kc_RefPos_z", "耦合阻抗参考位置的Z坐标"
         Case "Y"
-            StoreParameter "Kc_RefPos_y", IIf(0.5 * (g_cMin(g_iDir) + g_cMax(g_iDir)) < 1e-12, 0, 0.5 * (g_cMin(g_iDir) + g_cMax(g_iDir)))
+            StoreParameter "Kc_RefPos_y", IIf(Abs(0.5 * (g_cMin(g_iDir) + g_cMax(g_iDir))) < 1e-12, 0, 0.5 * (g_cMin(g_iDir) + g_cMax(g_iDir)))
             SetParameterDescription "Kc_RefPos_x", "耦合阻抗参考位置的X坐标"
             SetParameterDescription "Kc_RefPos_y", "耦合阻抗参考位置的Y坐标, 周期方向"
             SetParameterDescription "Kc_RefPos_z", "耦合阻抗参考位置的Z坐标"
         Case "Z"
-            StoreParameter "Kc_RefPos_z", IIf(0.5 * (g_cMin(g_iDir) + g_cMax(g_iDir)) < 1e-12, 0, 0.5 * (g_cMin(g_iDir) + g_cMax(g_iDir)))
+            StoreParameter "Kc_RefPos_z", IIf(Abs(0.5 * (g_cMin(g_iDir) + g_cMax(g_iDir))) < 1e-12, 0, 0.5 * (g_cMin(g_iDir) + g_cMax(g_iDir)))
             SetParameterDescription "Kc_RefPos_x", "耦合阻抗参考位置的X坐标"
             SetParameterDescription "Kc_RefPos_y", "耦合阻抗参考位置的Y坐标"
             SetParameterDescription "Kc_RefPos_z", "耦合阻抗参考位置的Z坐标, 周期方向"

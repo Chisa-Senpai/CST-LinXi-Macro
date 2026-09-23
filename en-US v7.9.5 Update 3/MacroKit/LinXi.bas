@@ -502,17 +502,17 @@ Private Sub InitializationPhase()
 
     Select Case g_sDirLabel
         Case "X"
-            StoreParameter "Kc_RefPos_x", IIf(0.5 * (g_cMin(g_iDir) + g_cMax(g_iDir)) < 1e-12, 0, 0.5 * (g_cMin(g_iDir) + g_cMax(g_iDir)))
+            StoreParameter "Kc_RefPos_x", IIf(Abs(0.5 * (g_cMin(g_iDir) + g_cMax(g_iDir))) < 1e-12, 0, 0.5 * (g_cMin(g_iDir) + g_cMax(g_iDir)))
             SetParameterDescription "Kc_RefPos_x", "X coordinate of the interaction impedance reference point, periodic direction"
             SetParameterDescription "Kc_RefPos_y", "Y coordinate of the interaction impedance reference point"
             SetParameterDescription "Kc_RefPos_z", "Z coordinate of the interaction impedance reference point"
         Case "Y"
-            StoreParameter "Kc_RefPos_y", IIf(0.5 * (g_cMin(g_iDir) + g_cMax(g_iDir)) < 1e-12, 0, 0.5 * (g_cMin(g_iDir) + g_cMax(g_iDir)))
+            StoreParameter "Kc_RefPos_y", IIf(Abs(0.5 * (g_cMin(g_iDir) + g_cMax(g_iDir))) < 1e-12, 0, 0.5 * (g_cMin(g_iDir) + g_cMax(g_iDir)))
             SetParameterDescription "Kc_RefPos_x", "X coordinate of the interaction impedance reference point"
             SetParameterDescription "Kc_RefPos_y", "Y coordinate of the interaction impedance reference point, periodic direction"
             SetParameterDescription "Kc_RefPos_z", "Z coordinate of the interaction impedance reference point"
         Case "Z"
-            StoreParameter "Kc_RefPos_z", IIf(0.5 * (g_cMin(g_iDir) + g_cMax(g_iDir)) < 1e-12, 0, 0.5 * (g_cMin(g_iDir) + g_cMax(g_iDir)))
+            StoreParameter "Kc_RefPos_z", IIf(Abs(0.5 * (g_cMin(g_iDir) + g_cMax(g_iDir))) < 1e-12, 0, 0.5 * (g_cMin(g_iDir) + g_cMax(g_iDir)))
             SetParameterDescription "Kc_RefPos_x", "X coordinate of the interaction impedance reference point"
             SetParameterDescription "Kc_RefPos_y", "Y coordinate of the interaction impedance reference point"
             SetParameterDescription "Kc_RefPos_z", "Z coordinate of the interaction impedance reference point, periodic direction"
