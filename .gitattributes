@@ -1,0 +1,25 @@
+* text=auto eol=crlf
+
+*.bas   text eol=crlf
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.txt   text eol=crlf
+*.ini   text eol=crlf
+*.mcr   text eol=crlf
+
+*.md    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+.gitattributes text eol=lf
+.gitignore     text eol=lf
+
+*.dll   -text -diff -merge
+*.png   -text -diff -merge
+*.jpg   -text -diff -merge
+*.jpeg  -text -diff -merge
+*.gif   -text -diff -merge
+*.sig   -text -diff -merge
+*.zip   -text -diff -merge
+*.7z    -text -diff -merge
+*.exe   -text -diff -merge
+*.dll  linguist-vendored

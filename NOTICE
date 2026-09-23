@@ -1,0 +1,77 @@
+# NOTICE
+
+CST-LinXi-Macro
+Copyright (c) 2026 她与梦 (She and Me)
+
+This product is licensed under the MIT License (see [LICENSE](LICENSE)).
+
+---
+
+## 1. 核心计算库 LinXi.dll / Core computation library
+
+| 文件 | 说明 |
+| --- | --- |
+| `*/MacroKit/LinXi.dll` | 核心计算库，x86-64 PE 动态库，约 3.74 MB。**由本人编写并编译，版权归本人所有，同样以 MIT 许可证发布。** |
+
+**现状：本仓库提供 `LinXi.dll` 的预编译二进制，但暂未提供其编译源码。**
+这只影响「使用者能否自行重新编译」，**不影响它的版权归属，也不影响 MIT 授权**——
+源码缺失是分发完整性问题，不是权利问题。
+
+本人确认：该 DLL 未静态或动态链接任何第三方数值计算库（如 FFTW、Intel MKL、
+OpenBLAS/LAPACK、GSL、Boost、TBB 等），因此不存在因第三方库许可证而产生的额外分发义务。
+
+对该二进制的实际检查结果如下（供交叉核对）：
+
+- 机器类型：`0x8664`（x86-64）；
+- PE 导入表中出现的 DLL 名称仅有 `kernel32.dll`（另有一次 `LinXi.dll` 自引用）；
+- 二进制中未发现 FFTW / MKL / BLAS / LAPACK / GSL / Boost / TBB / OpenMP 等库的特征字符串。
+
+> 若后续为 `LinXi.dll` 更换编译器、构建配置或引入任何第三方库，**必须重新核对本节**，
+> 并在许可允许的范围内补上相应的声明或源码。
+
+`LinXi.dll` 导出的函数原型（`CCoreVersion`、`CParseFieldFile`、`CParsePowerFlowFile`、
+`CComputePowerFlow`、`CIntegrateLongitudinal`、`CIntegratePowerFlow`、`CComputeTetraStep`、
+`CBuildUniformGrid`、`CBuildHexaGrid`、`CBuildCurveFiles`）在 `LinXi.bas` 文件顶部以
+`Declare Function` 形式完整声明，可用于核对接口。每个导出函数都以校验口令
+`CORE_AUTHOR` 作为第一个参数。
+
+> **关于二进制分发**：`LinXi.bas` 等宏以源码形式发布，使用者可自由修改；`LinXi.dll`
+> 当前只提供二进制，使用者**无法自行修改或重新编译其内部逻辑**。如果想让社区也能对 DLL
+> 二次开发，本人需要另行公开其编译源码。这与许可证无关，是本项目当前的发布选择。
+
+## 2. 不包含第三方代码 / No third-party code included
+
+**本仓库不包含任何 CST 官方示例代码，也不包含任何第三方程序库。**
+
+`CST`、`CST Studio Suite` 是 Dassault Systèmes 的商标。本项目与 Dassault Systèmes
+无隶属或背书关系；安装与使用 CST 需另行遵守其许可协议。
+
+### 与 CST 公开接口的关系 / Relationship to the public CST interface
+
+本项目的宏需要与 CST 交互，因而使用了 CST 公开文档中的**接口调用约定**：
+
+- `ParameterSweepWatch(action)` 回调约定（`0 = 扫参前 / 1 = 每个扫描点 / 2 = 扫参后`）；
+- `AddToHistory … "ParameterSweep.AddUserdefinedWatch"` 的监视器注册方式；
+- `Result1D` / `Result3D` / `ASCIIExport` / `Mesh` / `Boundary` 等 CST 内建对象的方法调用。
+
+这些是任何同类宏都必须遵循的接口用法，属于功能性调用约定，不构成本项目的独创表达。
+除此之外，`LinXi.bas` 的日志系统、配置校验、参数设置对话框、DLL 接口层、网格采样、
+场积分与曲线汇总，以及 `Me.bas`、`She.bas` 的全部实现，均针对本项目功能独立编写。
+
+## 3. 本项目原创文件 / Original work
+
+本仓库的全部内容均为本人的原创作品，采用 MIT 许可证：
+
+| 内容 | 形式 |
+| --- | --- |
+| `LinXi.bas`、`Me.bas`、`She.bas` | 源码 |
+| `LinXi.ini` | 配置文件 |
+| 安装 / 卸载批处理脚本 | 脚本 |
+| `LinXi.dll` | 本人编译的二进制（源码暂未公开，见第 1 节） |
+| 本仓库全部文档 | 文档 |
+
+    Copyright (c) 2026 她与梦 (She and Me)
+    SPDX-License-Identifier: MIT
+
+许可证全文见仓库根目录 [LICENSE](LICENSE)。在保留版权与许可声明的前提下，上述内容均可
+自由使用、修改、分发，包括商业用途。
