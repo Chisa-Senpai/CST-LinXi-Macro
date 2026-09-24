@@ -1,7 +1,7 @@
 '==============================================================================
 ' CST-LinXi-Macro  -  slow-wave structure watch setup wizard (Me.bas)
 '
-' Copyright (c) 2026 She and Me
+' Copyright (c) 2026 Limorazp
 ' SPDX-License-Identifier: MIT
 '
 ' Released under the MIT License; full text: see LICENSE in the repository root.
@@ -106,7 +106,7 @@ Private Function ShowWelcomeDialog() As Boolean
         OKButton     340, 320, 100, 42
 
         Text  20, 372, 300, 14, "Version: " & g_sVersionString & " (" & g_sVersionLabel & ")"
-        Text 487, 372, 200, 14, "Author:  " & g_sAuthorName
+        Text 512, 372, 200, 14, "Author:  " & g_sAuthorName
 
     End Dialog
 

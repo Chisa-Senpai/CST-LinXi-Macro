@@ -1,7 +1,7 @@
 '==============================================================================
 ' 林夕宏代码 (CST-LinXi-Macro)  —  CST 本征模慢波结构用户监视器宏
 '
-' Copyright (c) 2026 她与梦 (She and Me)
+' Copyright (c) 2026 Limorazp
 ' SPDX-License-Identifier: MIT
 '
 ' 本文件以 MIT 许可证开源发布。在遵守许可证的前提下, 可自由使用、复制、修改、
@@ -37,6 +37,7 @@ Private Const KC_SANITY_MAX     As Double = 1E+08      ' 耦合阻抗合理上限 (Ohm),
 ' ---- 路径长度预算: 规避 Windows 260 字符限制 ----
 Private Const MAX_PATH_SAFE        As Integer = 250    ' Temp 路径 + 文件名允许的总长
 Private Const FILE_TAG_FIXED       As Integer = 24     ' 文件名中固定部分占用的字符数
+Private Const MIN_FILE_TAG_BUDGET  As Integer = 18     ' 标签可用字符数下限, 低于该值无法生成安全文件名
 
 ' ---- 日志等级; 数值越大越严重 ----
 Private Enum LogLevel
@@ -69,20 +70,22 @@ Private Const MSG_ABORT_MACRO      As String = vbCrLf & vbCrLf & "发现致命错误! 
                                                "错误信息: "
 
 ' ---- 结果曲线在临时文件名与结果树中使用的名称 ----
-Private Const F_BETA    As String = "beta"                      ' 相位常数 beta
+Private Const F_BETA    As String = "beta"                       ' 相位常数 beta
 Private Const F_ZPIERCE As String = "ZpierceAvg"                 ' 皮尔斯耦合阻抗
 Private Const F_VPHASE  As String = "vphase"                     ' 归一化相速度
 Private Const F_PHASE   As String = "phase"                      ' 扫描相位
-Private Const F_RESULT_GROUP   As String = "User-Defined Macro Result"  ' 结果树分组名
+Private Const F_RESULT_GROUP   As String = "PlotOutput LinXi Macro Result"  ' 结果树分组名
 
 ' ---- 外部配置文件 (版本信息的唯一来源) ----
 Private Const CFG_FILE_NAME    As String = "LinXi.ini"
 Private Const CFG_SECTION_VER  As String = "VERSION"
 
-' ---- 功率流计算方式 (使能位 Macro_SweepWatch_Enable 的整数位) ----
-Private Const PW_SRC_FROM_EH  As Integer = 1     ' 间接法: 由 E、H 场先插值后叉积再积分
-Private Const PW_SRC_FROM_CST As Integer = 2     ' 原生法: 用 CST 生成的功率流场
-Private Const PW_SRC_INVALID  As Integer = 0     ' 非法 / 已禁用
+' ---- 功率流计算方式 ----
+Private Const PW_SRC_FROM_EH  As Integer = 1     ' 使能位整数位编码: 间接法 (由 E、H 场先插值后叉积再积分)
+Private Const PW_SRC_FROM_CST As Integer = 2     ' 使能位整数位编码: 原生法 (用 CST 生成的功率流场)
+Private Const PW_SRC_INVALID  As Integer = 0     ' 禁用 / 非法 (保留: 使能位不得取 0)
+Private Const PW_SRC_INDIRECT As Integer = 0     ' 内部编码: 间接法, 等于 PW_SRC_FROM_EH - 1
+Private Const PW_SRC_NATIVE   As Integer = 1     ' 内部编码: 原生法, 等于 PW_SRC_FROM_CST - 1
 
 ' ---- 耦合阻抗计算区域 (使能位 Macro_SweepWatch_Enable 的一位小数位) ----
 Private Const REGION_BOTH     As Integer = 0     ' 行波区 + 返波区: 不判断频率升降
@@ -105,7 +108,8 @@ Private g_abModeFlag()  As Boolean             ' 各模式是否参与计算
 Private g_bGridFailed   As Boolean             ' 采样网格构建失败标记
 Private g_abPhaseDead() As Boolean             ' 各模式的相位扫描是否已判为无效
 Private g_anPhaseFlat() As Long                ' 各模式频率连续未变化的点数
-Private g_abPhaseWarned() As Boolean           ' 各模式是否已给出过告警
+Private g_abPhaseFlatWarned() As Boolean       ' 各模式是否已给出过"频率未随 phase 变化"告警
+Private g_abKcWarned() As Boolean              ' 各模式是否已给出过"Kc 超过合理上限"告警
 Private g_nPhaseStateModes As Long             ' 相位状态数组当前容量
 
 ' ---- 路径与结果分组 ----
@@ -126,7 +130,7 @@ Private g_bLogInited        As Boolean
 Private g_nLogFileMinLevel  As LogLevel        ' 写盘的最低等级, 低于该等级只进调试输出
 Private g_sLogLastError     As String          ' 最近一次写盘失败信息, 结束时汇总提示
 
-' ---- 版本信息 (全部来自 LinXi.ini, 代码内不保留兜底值) ----
+' ---- 版本信息 ----
 Private g_sVersionString As String
 Private g_sVersionLabel  As String
 Private g_sAuthorName    As String
@@ -309,7 +313,7 @@ Private Sub PreConfiguration(ByVal action As Integer)
 
     sMeshType = Mesh.GetMeshType
 
-    ' 缓存本工程的环境量, 避免后续反复调用 CST 接口
+    ' 缓存本工程的环境全局变量
     g_bIsTetra    = (sMeshType = "Tetrahedral")
     g_sTemp       = GetProjectPath("Temp")
     g_sResult     = GetProjectPath("Result")
@@ -322,7 +326,16 @@ Private Sub PreConfiguration(ByVal action As Integer)
     ' 文件名标签预算 = 总允许长度 - Temp 路径长度 - 固定开销, 防止超出 260 字符
     g_nFileTagBudget = MAX_PATH_SAFE - Len(g_sTemp) - FILE_TAG_FIXED
 
-    If action = 0 Then InitLogFile
+    If action = 0 Then
+        InitLogFile
+        ' 路径预算不足时必须在写盘前中止: 否则标签会超出总长, 临时文件写不进又清理不掉
+        If g_nFileTagBudget < MIN_FILE_TAG_BUDGET Then
+            LogCritical "工程路径过长: Temp 路径长度 = " & Len(g_sTemp) & _
+                " 字符, 文件名标签仅剩 " & g_nFileTagBudget & " 字符 (至少需要 " & _
+                MIN_FILE_TAG_BUDGET & " 字符)。请将工程移至更短的目录后重新运行", True
+            End
+        End If
+    End If
 
     If Not g_bCfgOK Then AbortOnConfigError
 
@@ -347,18 +360,18 @@ Private Sub PreConfiguration(ByVal action As Integer)
             SetParameterDescription "Macro_SweepWatch_Enable", EnableFlagText(iFlagSrc, iFlagRegion)
         Else
             bNeedSetupDialog = True
-            g_iPowerFlowSrc = 0
+            g_iPowerFlowSrc = PW_SRC_INDIRECT
             g_iRegionMode = REGION_BOTH
             LogWarning "  Macro_SweepWatch_Enable = " & Format(Macro_flag, "0.0####") & _
-                " 不是合法的使能位取值, 本次运行将重新弹出参数设置对话框"
+                " 不是合法的使能位取值, 本次运行将重新弹出参数设置对话框!"
         End If
     Else
         bNeedSetupDialog = True
-        g_iPowerFlowSrc = 0
+        g_iPowerFlowSrc = PW_SRC_INDIRECT
         g_iRegionMode = REGION_BOTH
     End If
 
-    ' 唯一的周期方向即扫描方向; 不允许 0 个或 2 个以上
+    ' 唯一的周期方向即扫描方向; 只允许存在 1 个周期方向, 不允许存在 0 个或 2 个及以上的周期方向
     With Boundary
         Dim nPeriodic As Integer
         nPeriodic = 0
@@ -372,7 +385,7 @@ Private Sub PreConfiguration(ByVal action As Integer)
             LogCritical("未设置周期性边界条件!", True)
             End
         End If
-        ' 计算域包围盒; 周期方向长度即结构周期 pitch
+        ' 识别计算域空间; 周期方向长度即结构周期 pitch
         .GetCalculationBox g_cMin(1), g_cMax(1), _
             g_cMin(2), g_cMax(2), _
             g_cMin(3), g_cMax(3)
@@ -439,7 +452,6 @@ Private Sub PreConfiguration(ByVal action As Integer)
         Dim iIdx As Integer
     Else
         ' --- 分支二: 首次运行或设置被删除, 弹出参数设置对话框 ---
-
         If DoesParameterExist("Kc_RefPos_x") Then
             pos(1) = RestoreParameter("Kc_RefPos_x")
         End If
@@ -464,7 +476,7 @@ Private Sub PreConfiguration(ByVal action As Integer)
         SetParameterDescription "Macro_SweepWatch_Enable", _
             EnableFlagText(g_iPowerFlowSrc, g_iRegionMode)
 
-        ' 周期方向的参考位置强制取计算域中心, 其余方向由用户给定
+        ' 周期方向的参考位置强制取计算域中心
         pos(g_iDir) = 0.5 * (g_cMin(g_iDir) + g_cMax(g_iDir))
         Dim iPos As Integer
         For iPos = 1 To 3
@@ -478,7 +490,7 @@ Private Sub PreConfiguration(ByVal action As Integer)
         SetParameterDescription "Kc_RefPos_y", "耦合阻抗参考位置的Y坐标"
         SetParameterDescription "Kc_RefPos_z", "耦合阻抗参考位置的Z坐标"
 
-        ' 先清理残留的 Macro_Modex, 再按本次选择重建 (参数"存在"即代表选中)
+        ' 先清理残留的 Macro_Modex, 再按本次选择重建 (参数"存在"即代表选定对应的模式)
         On Error Resume Next
         For iChk = 1 To MAX_MODE_PARAMS
             If DoesParameterExist("Macro_Mode" & CStr(iChk)) Then
@@ -507,7 +519,7 @@ Private Sub PreConfiguration(ByVal action As Integer)
     g_yRef = pos(2)
     g_zRef = pos(3)
 
-    ' 参考位置必须落在与周期方向垂直的截面内部, 否则无法积分
+    ' 非周期方向的参考位置必须落在与周期方向垂直的截面内部, 否则无法积分或积分错误
     Select Case g_sDirLabel
         Case "X"
             If g_yRef <= g_cmin(2) Or g_yRef >= g_cmax(2) Then LogCritical("耦合阻抗参考位置的 Y 坐标落在计算域外!", True)
@@ -534,12 +546,13 @@ Private Sub InitializationPhase()
     ' 删除上一次运行留下的结果分组 (只删该分组, 不动其它结果)
     DeleteTreeItemRecursive "1D Results\" & F_RESULT_GROUP
 
+    ' 防御性代码, CST 本征模求解器模式数量至少为 1
     If g_iNumModes = 0 Then
         LogCritical "未找到任何本征模式", True
         End
     End If
 
-    ' 清理 Temp 目录下本宏产生的全部中间文件
+    ' 清理 Temp 目录内上一次宏产生的全部中间文件
     On Error Resume Next
     DeleteFilesByPattern g_sTemp & "_beta_*.sig"
     DeleteFilesByPattern g_sTemp & "_ZpierceAvg_*.sig"
@@ -567,7 +580,7 @@ Private Sub InitializationPhase()
         On Error GoTo 0
     Next iCleanup
 
-    ' 周期方向的参考坐标 = 计算域中心 (避免 -0 写入参数)
+    ' 周期方向的参考坐标 = 计算域中心
     Select Case g_sDirLabel
         Case "X"
             StoreParameter "Kc_RefPos_x", IIf(Abs(0.5 * (g_cMin(g_iDir) + g_cMax(g_iDir))) < 1e-12, 0, 0.5 * (g_cMin(g_iDir) + g_cMax(g_iDir)))
@@ -605,7 +618,8 @@ Private Sub ProcessingPhase()
     If g_iNumModes > 0 And g_nPhaseStateModes <> g_iNumModes Then
         ReDim g_abPhaseDead(1 To g_iNumModes)
         ReDim g_anPhaseFlat(1 To g_iNumModes)
-        ReDim g_abPhaseWarned(1 To g_iNumModes)
+        ReDim g_abPhaseFlatWarned(1 To g_iNumModes)
+        ReDim g_abKcWarned(1 To g_iNumModes)
         g_nPhaseStateModes = g_iNumModes
     End If
 
@@ -616,12 +630,12 @@ Private Sub ProcessingPhase()
     Dim sParamName  As String
     Dim dParamVal   As Double
 
-    ' 扫描列表中必须存在 phase; 其余变量共同构成"参数组合"分组键
+    ' 扫描列表中必须存在 phase; 其余变量共同构成 "参数组合" 分组键
     With ParameterSweep
         nParams = .GetNumberOfVaryingParameters
 
-        bFound      = False
-        nPhaseIndex = -1
+        bFound       = False
+        nPhaseIndex  = -1
         g_sGroupPath = ""
         g_sGroupKey  = ""
 
@@ -806,17 +820,14 @@ Private Sub ProcessingPhase()
         ' 频率有效性判定, 连续 FREQ_FLAT_MAX 点即判整个相位扫描无效
         If bFreqFlat Then
             g_anPhaseFlat(iMode) = g_anPhaseFlat(iMode) + 1
-            If Not g_abPhaseWarned(iMode) Then
-                g_abPhaseWarned(iMode) = True
+            If Not g_abPhaseFlatWarned(iMode) Then
+                g_abPhaseFlatWarned(iMode) = True
                 LogWarning "  Mode " & sMode & ": 频率未随 phase 变化 (f = " & _
                     Format(dFreqHz, "0.000E+00") & " " & Units.GetFrequencyUnit & ", 相对变化 " & _
-                    Format(dFreqRel, "0.0E+00") & ")。 原因通常是: 求解器没有把 phase 施加到 " & _
-                    g_sDirLabel & " 方向周期边界的相位差上 (各扫描点解的是同一个模式), 或该模式" & _
-                    "位于 Pi 点附近。 两种情况下的净功率流都接近零, 耦合阻抗" & _
-                    "无意义, 已判为无效"
+                    Format(dFreqRel, "0.0E+00") & ")。 原因通常是: 边界设置中没有把 phase 施加到 " & _
+                    g_sDirLabel & " 方向周期边界的相位差上, 或该模式位于 Pi 点附近。 两种情况下的净功率流都接近零, 耦合阻抗无意义, 已判定为无效!"
             ElseIf g_anPhaseFlat(iMode) <= FREQ_FLAT_MAX Then
-                LogInfo "  Mode " & sMode & ": 频率仍未随 phase 变化 (连续 " & _
-                    g_anPhaseFlat(iMode) & " 点), 本点耦合阻抗记为无效"
+                LogInfo "  Mode " & sMode & ": 频率仍未随 phase 变化 (连续 " & g_anPhaseFlat(iMode) & " 点), 本扫描点耦合阻抗判定为无效!"
             End If
             If g_anPhaseFlat(iMode) >= FREQ_FLAT_MAX And Not g_abPhaseDead(iMode) Then
                 g_abPhaseDead(iMode) = True
@@ -824,13 +835,13 @@ Private Sub ProcessingPhase()
                     "判定本次扫描的相位扫描无效, 请检查 " & g_sDirLabel & " 方向: " & _
                     "(1) 两侧边界是否都设为 periodic; (2) 周期边界的相位差是否绑定到扫描变量 phase; " & _
                     "(3) 计算域在该方向是否恰好为一个周期。"
-                LogWarning "  Mode " & sMode & ": 后续扫描点将跳过场导出与积分, 仅记录频率与相位"
+                LogWarning "  Mode " & sMode & ": 后续扫描点将跳过场导出与积分, 仅记录场频率与相位"
             End If
         Else
             g_anPhaseFlat(iMode) = 0
             If g_abPhaseDead(iMode) Then
                 g_abPhaseDead(iMode) = False
-                g_abPhaseWarned(iMode) = False
+                g_abPhaseFlatWarned(iMode) = False
                 LogInfo "  Mode " & sMode & ": 频率重新随 phase 变化, 恢复该模式的耦合阻抗计算"
             End If
         End If
@@ -869,7 +880,7 @@ Private Sub ProcessingPhase()
                 " GHz, 开始计算..."
 
             Dim bFieldsOK As Boolean
-            If g_iPowerFlowSrc = 1 Then
+            If g_iPowerFlowSrc = PW_SRC_NATIVE Then
                 bFieldsOK = PreparePowerFieldFromCST(iMode, sMode)   ' 原生法: 由 CST 叉积生成功率流场
             Else
                 bFieldsOK = LoadFieldDataFromEH(iMode)               ' 间接法: 导出 E 与 H 场
@@ -884,46 +895,46 @@ Private Sub ProcessingPhase()
                     ", E_abs = " & Format(dEabs, "0.000E+00")
 
                 ' 沿横截面积分得到净功率流 P
-                If g_iPowerFlowSrc = 1 Then
+                If g_iPowerFlowSrc = PW_SRC_NATIVE Then
                     ComputePowerFlowFromCST dPower
                 Else
                     ComputePowerFlowFromEH dPower
                 End If
                 LogInfo "    功率流: P = " & Format(dPower, "0.000E+00") & " W"
 
-                If g_iPowerFlowSrc = 0 And dPower = 0# Then
+                If g_iPowerFlowSrc = PW_SRC_INDIRECT And dPower = 0# Then
                     LogWarning "    提示: E/H 方式下功率流为 0。请确认结果树中 Mode " & sMode & _
-                        " 的磁场项可正常选取 —— 若磁场导出失败, E × H* 的实部将恒为 0。"
+                        " 的磁场项可正常选取!"
                 End If
 
                 ' 皮尔斯耦合阻抗 Kc = |V|^2 / (2 * beta^2 * P); 分母异常或结果越界时记为无效
                 If dVSq = 0# Then
                     dKc = -1#
-                    LogWarning "    纵向积分无有效结果 (|V|^2 = 0), 本点耦合阻抗记为无效"
+                    LogWarning "    纵向积分无有效结果 (|V|^2 = 0), 本点耦合阻抗记为无效!"
                 ElseIf dBeta = 0# Or dPower <= 0# Then
                     dKc = -1#
                     If dBeta = 0# Then
-                        LogWarning "    相位常数为零 (beta = 0), 本点耦合阻抗记为无效"
+                        LogWarning "    相位常数为零 (beta = 0), 本点耦合阻抗记为无效!"
                     Else
-                        LogWarning "    功率流非正 (P = " & Format(dPower, "0.000E+00") & " W), 本点耦合阻抗记为无效"
+                        LogWarning "    功率流非正 (P = " & Format(dPower, "0.000E+00") & " W), 本点耦合阻抗记为无效!"
                     End If
                 Else
                     dKc = dVSq / (2# * dBeta * dBeta * dPower)
                     If dKc > KC_SANITY_MAX Then
-                        If Not g_abPhaseWarned(iMode) Then
-                            g_abPhaseWarned(iMode) = True
+                        If Not g_abKcWarned(iMode) Then
+                            g_abKcWarned(iMode) = True
                             LogWarning "    功率流异常小: P = " & Format(dPower, "0.000E+00") & " W, 对应 Kc = " & _
                                 Format(dKc, "0.000E+00") & " Ohm, 超过合理上限 " & _
-                                Format(KC_SANITY_MAX, "0.000E+00") & " Ohm, 本点耦合阻抗记为无效"
+                                Format(KC_SANITY_MAX, "0.000E+00") & " Ohm, 本点耦合阻抗记为无效!"
                         Else
-                            LogInfo "    Kc 超过合理上限 (" & Format(dKc, "0.000E+00") & " Ohm), 本点记为无效"
+                            LogInfo "    Kc 超过合理上限 (" & Format(dKc, "0.000E+00") & " Ohm), 本点记为无效!"
                         End If
                         dKc = -1#
                     End If
                 End If
                 LogInfo "    耦合阻抗: Kc = " & Format(dKc, "0.000E+00") & " Ohm"
             Else
-                LogError "Mode " & sMode & ": 场导出 / 解析失败, 本点输出无效值"
+                LogError "Mode " & sMode & ": 场导出 / 解析失败, 本点输出无效值!"
                 dVre = 0#: dVim = 0#: dEabs = 0#: dVSq = 0#
                 dPower = -1#: dKc = -1#
             End If
@@ -984,7 +995,7 @@ Private Sub FinalizationPhase()
 
     ' 回读 _groups.txt (每行: 结果树路径|组合键|组合序号), 按路径去重得到参数组合清单
     On Error Resume Next
-    If Dir(g_sTemp & "_groups.txt") <> "" Then
+    If FileExists(g_sTemp & "_groups.txt") Then
         fGroup = FreeFile
         Open g_sTemp & "_groups.txt" For Input As #fGroup
         Do While Not EOF(fGroup)
@@ -1460,7 +1471,7 @@ Private Sub CheckCoreLibrary()
     Dim sDllPath As String
     sDllPath = GetInstallPath & "\AMD64\LinXi.dll"
 
-    If Dir(sDllPath) = "" Then
+    If Not FileExists(sDllPath) Then
         MsgBox "错误: 无法加载核心计算库 LinXi.dll。" & vbCrLf & _
             "未找到核心计算库文件:" & vbCrLf & sDllPath & vbCrLf & vbCrLf & _
             "请确认:" & vbCrLf & _
@@ -1699,7 +1710,7 @@ Private Function DialogFunc(ByVal DlgItem$, ByVal Action%, ByVal SuppValue&) As 
                      "selectMode9", "selectMode10", "selectMode11", "selectMode12", _
                      "selectMode13", "selectMode14", "selectMode15", "selectMode16", _
                      "selectMode17", "selectMode18", "selectMode19", "selectMode20"
-                    DlgValue "Group1", 1
+                    If DlgValue("Group1") <> 1 Then DlgValue "Group1", 1
                     DialogFunc = True
                 Case "Group2"
                     ' 切换功率流方式时同步切换说明文字
@@ -1892,9 +1903,9 @@ Private Function ShowParamsDialog(ByRef pos() As Double, _
         End Select
 
         If dlg.Group2 = 1 Then
-            g_iPowerFlowSrc = 1
+            g_iPowerFlowSrc = PW_SRC_NATIVE
         Else
-            g_iPowerFlowSrc = 0
+            g_iPowerFlowSrc = PW_SRC_INDIRECT
         End If
 
         Select Case dlg.Group3
@@ -2066,41 +2077,41 @@ Private Sub ShowHelpDialog()
         GroupBox 20, 42, 520, 295, "[ 参数说明 ]"
 
         Text  36,  63, 484, 14, "1. Macro_SweepWatch_Enable = 运行使能位 + 功率流计算方式 + 计算区域"
-        Text  56,  91, 464, 14, "· 整数位: 1 = 间接功率流法; 2 = 原生功率流法; 0 = 禁用。"
-        Text  56, 119, 464, 14, "· 小数位: 0 = 行波区与返波区; 1 = 仅行波区; 2 = 仅返波区。"
-        Text  56, 147, 464, 14, "· 行波区要求频率随 phase 上升, 返波区要求频率随 phase 下降。"
-        Text  56, 175, 464, 14, "· 其它取值 (例如 1.3、1.11) 会在下次运行时重新弹出参数设置对话框。"
+        Text  56,  91, 464, 14, "- 整数位: 1 = 间接功率流法; 2 = 原生功率流法; 0 = 禁用。"
+        Text  56, 119, 464, 14, "- 小数位: 0 = 行波区与返波区; 1 = 仅行波区; 2 = 仅返波区。"
+        Text  56, 147, 464, 14, "- 行波区要求频率随 phase 上升, 返波区要求频率随 phase 下降。"
+        Text  56, 175, 464, 14, "- 其它取值 (例如 1.3、1.11) 会在下次运行时重新弹出参数设置对话框。"
         Text  36, 203, 484, 14, "2. Kc_RefPos_x / y / z = 耦合阻抗参考位置的三维坐标"
-        Text  56, 231, 464, 14, "· 周期方向自动锁定为计算域中心, 不可修改。"
-        Text  56, 259, 464, 14, "· 非周期方向可由用户自由设置。"
+        Text  56, 231, 464, 14, "- 周期方向自动锁定为计算域中心, 不可修改。"
+        Text  56, 259, 464, 14, "- 非周期方向可由用户自由设置。"
         Text  36, 287, 484, 14, "3. Macro_Modex (x = 1, 2, 3 ...) = 耦合阻抗计算标志"
-        Text  56, 315, 464, 14, "· 宏仅检测该参数是否存在于参数列表中, 不关心其取值。"
+        Text  56, 315, 464, 14, "- 宏仅检测该参数是否存在于参数列表中, 不关心其取值。"
 
         GroupBox 560, 42, 580, 295, "[ 参数设置与日志系统 ]"
 
         Text 576,  63, 548, 14, "-- 参数设置"
-        Text 576,  91, 548, 14, "· 按界面提示勾选或输入模式编号即可。"
-        Text 576, 119, 548, 14, "· 若设置的模式号超出求解器本征模数量, 将自动截断超过范围的部分。"
-        Text 576, 147, 548, 14, "· 功率流的计算有两种方式可以选择。"
-        Text 576, 175, 548, 14, "· 计算区域可选择行波区、返波区或两者都计算。"
-        Text 576, 203, 548, 14, "· 选择两者时不再判断频率的升降, 全部扫描点都计算耦合阻抗。"
+        Text 576,  91, 548, 14, "- 按界面提示勾选或输入模式编号即可。"
+        Text 576, 119, 548, 14, "- 若设置的模式号超出求解器本征模数量, 将自动截断超过范围的部分。"
+        Text 576, 147, 548, 14, "- 功率流的计算有两种方式可以选择。"
+        Text 576, 175, 548, 14, "- 计算区域可选择行波区、返波区或两者都计算。"
+        Text 576, 203, 548, 14, "- 选择两者时不再判断频率的升降, 全部扫描点都计算耦合阻抗。"
         Text 576, 231, 548, 14, "-- 日志系统"
-        Text 576, 259, 548, 14, "· 日志文件: 工程目录 \Temp\macro_log.txt"
-        Text 576, 287, 548, 14, "· 记录扫参全过程 (进度、错误信息), 方便排查问题。"
+        Text 576, 259, 548, 14, "- 日志文件: 工程目录 \Temp\macro_log.txt"
+        Text 576, 287, 548, 14, "- 记录扫参全过程 (进度、错误信息), 方便排查问题。"
 
         GroupBox 20, 347, 1120, 239, "[ 重要注意事项 ]"
 
-        Text  36, 368, 528, 14, "· 求解器推荐使用 JDM 算法, 因为计算精确。"
-        Text 592, 368, 528, 14, "· JDM 算法下本征模命名不得含小数点。"
-        Text  36, 396, 528, 14, "· 扫参期间请勿在当前窗口手动操作。"
-        Text 592, 396, 528, 14, "· 重复扫参前请清除已有结果, 否则计算结果会丢失。"
-        Text  36, 424, 528, 14, "· 单窗口单任务, 多任务请用多个 CST 窗口。"
-        Text 592, 424, 528, 14, "· 暂停方式: 取消扫参任务即可。"
-        Text  36, 452, 1088, 14, "· 删除历史树慢波结构用户监视器步骤不等于移除宏程序本身。"
-        Text  36, 480, 1088, 14, "· 请勿开启本征模工程下电场或磁场的 Fields on Plane 和 Cutting Plane 视图。"
-        Text  36, 508, 1088, 14, "· 宏程序所依赖的 Macro_SweepWatch_Enable, Macro_Modex 以及周期方向的 Kc_RefPos 参数不得扫描。"
-        Text  36, 536, 1088, 14, "· 删除 Macro_SweepWatch_Enable 可让程序在下一次运行时重新弹出参数设置对话框, 重选功率流方式与计算区域。"
-        Text  36, 564, 1088, 14, "· 建议将工程存放于路径较短的目录中, 避免路径长度超出 Windows 260 字符限制, 造成数据文件读写失败。"
+        Text  36, 368, 528, 14, "- 求解器推荐使用 JDM 算法, 因为计算精确。"
+        Text 592, 368, 528, 14, "- JDM 算法下本征模命名不得含小数点。"
+        Text  36, 396, 528, 14, "- 扫参期间请勿在当前窗口手动操作。"
+        Text 592, 396, 528, 14, "- 重复扫参前请清除已有结果, 否则计算结果会丢失。"
+        Text  36, 424, 528, 14, "- 单窗口单任务, 多任务请用多个 CST 窗口。"
+        Text 592, 424, 528, 14, "- 暂停方式: 取消扫参任务即可。"
+        Text  36, 452, 1088, 14, "- 删除历史树慢波结构用户监视器步骤不等于移除宏程序本身。"
+        Text  36, 480, 1088, 14, "- 请勿开启本征模工程下电场或磁场的 Fields on Plane 和 Cutting Plane 视图。"
+        Text  36, 508, 1088, 14, "- 宏程序所依赖的 Macro_SweepWatch_Enable, Macro_Modex 以及周期方向的 Kc_RefPos 参数不得扫描。"
+        Text  36, 536, 1088, 14, "- 删除 Macro_SweepWatch_Enable 可让程序在下一次运行时重新弹出参数设置对话框, 重选功率流方式与计算区域。"
+        Text  36, 564, 1088, 14, "- 建议将工程存放于路径较短的目录中, 避免路径长度超出 Windows 260 字符限制, 造成数据文件读写失败。"
 
         OKButton 530, 595, 100, 42
 
@@ -2157,6 +2168,7 @@ Private Function DecodeEnableFlag(ByVal dValue As Double, _
     Dim nCode As Long
     Dim nMethod As Long
     Dim nRegionCode As Long
+    Dim nSrcCode As Long
 
     DecodeEnableFlag = False
     iSrc = 0
@@ -2174,10 +2186,12 @@ Private Function DecodeEnableFlag(ByVal dValue As Double, _
     nMethod = nCode \ ENABLE_FLAG_SCALE
     nRegionCode = nCode Mod ENABLE_FLAG_SCALE
 
-    If nMethod <> PW_SRC_FROM_EH And nMethod <> PW_SRC_FROM_CST Then Exit Function
+    ' 合法整数位应为 PW_SRC_FROM_EH 或 PW_SRC_FROM_CST; 内部约定的位源编号 = 使能位整数位 - 1
+    nSrcCode = nMethod - 1
+    If nSrcCode <> PW_SRC_INDIRECT And nSrcCode <> PW_SRC_NATIVE Then Exit Function
     If nRegionCode < REGION_BOTH Or nRegionCode > REGION_BACKWARD Then Exit Function
 
-    iSrc = CInt(nMethod - 1)
+    iSrc = CInt(nSrcCode)
     iRegion = CInt(nRegionCode)
     DecodeEnableFlag = True
 End Function
@@ -2193,6 +2207,7 @@ End Function
 Private Function SafeNamePart(ByVal s As String) As String
     Dim i As Long, ch As String, sOut As String
 
+    ' 参数组合键由 " & " 与 " = " 拼接而成(等号后为两个空格), 替换串必须逐字对应
     s = Replace(s, " & ", "+")
     s = Replace(s, " = ", "-")
 
@@ -2235,7 +2250,12 @@ Private Function MakeFileTag(ByVal sKey As String, ByVal nIndex As Long, _
         Exit Function
     End If
 
-    If nBudget < 12 Then nBudget = 12
+    ' 预算不足时用最小标记代替, 保证返回的标签长度不超过预算
+    If nBudget < MIN_FILE_TAG_BUDGET Then
+        MakeFileTag = "_g" & CStr(nIndex)
+        Exit Function
+    End If
+
     sRead = SafeNamePart(sKey)
     If Len(sRead) > nBudget - 6 Then sRead = Left$(sRead, nBudget - 6)
 
@@ -2251,7 +2271,7 @@ Private Function LookupGroupIndex(ByVal sKey As String, ByRef nCount As Long) As
     nCount = 0
     LookupGroupIndex = 0
     If Len(sKey) = 0 Then Exit Function
-    If Dir(g_sTemp & "_groups.txt") = "" Then Exit Function
+    If Not FileExists(g_sTemp & "_groups.txt") Then Exit Function
 
     Err.Clear
     On Error Resume Next
@@ -2327,18 +2347,38 @@ Private Sub DeleteTreeItemRecursive(ByVal sPath As String)
     End If
 End Sub
 
+' 文件是否真实存在
+Private Function FileExists(ByVal sPath As String) As Boolean
+    Dim nAttr As Long
+
+    FileExists = False
+    If Len(sPath) = 0 Then Exit Function
+
+    Err.Clear
+    On Error Resume Next
+    nAttr = GetAttr(sPath)
+    If Err.Number = 0 Then FileExists = True
+    Err.Clear
+    On Error GoTo 0
+End Function
+
 ' 按通配符批量删除文件 (删除失败静默忽略)
 Private Sub DeleteFilesByPattern(ByVal sPattern As String)
     Dim sDir As String, sFile As String
-    On Error Resume Next
+    Dim nCut As Long
 
-    sDir = Left(sPattern, InStrRev(sPattern, "\"))
+    ' 目标目录 = 模式串最后一个反斜杠及其之前的部分; 不含反斜杠时无法定位, 直接放弃
+    nCut = InStrRev(sPattern, "\")
+    If nCut = 0 Then Exit Sub
+    sDir = Left$(sPattern, nCut)
+
+    ' 本过程必须独占 Dir 的枚举状态: 循环体内不得调用 Dir 或任何会枚举目录的接口
+    On Error Resume Next
     sFile = Dir(sPattern)
     Do While sFile <> ""
         Kill sDir & sFile
         sFile = Dir()
     Loop
-
     On Error GoTo 0
 End Sub
 
@@ -2997,7 +3037,8 @@ Private Sub ResetPhaseSweepState()
     For i = 1 To g_nPhaseStateModes
         g_abPhaseDead(i) = False
         g_anPhaseFlat(i) = 0
-        g_abPhaseWarned(i) = False
+        g_abPhaseFlatWarned(i) = False
+        g_abKcWarned(i) = False
     Next i
 End Sub
 
@@ -3029,7 +3070,7 @@ Private Sub InitLogFile()
     LogInit
     If Len(g_sLogFile) = 0 Then Exit Sub
 
-    If Dir(g_sLogFile) = "" Then CreateEmptyFile g_sLogFile
+    If Not FileExists(g_sLogFile) Then CreateEmptyFile g_sLogFile
 
     Dim fTime As Integer
     fTime = FreeFile

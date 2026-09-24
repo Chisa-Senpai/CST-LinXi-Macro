@@ -1,7 +1,7 @@
 '==============================================================================
 ' 林夕宏代码 (CST-LinXi-Macro)  —  慢波结构用户监视器配置向导 (Me.bas)
 '
-' Copyright (c) 2026 她与梦 (She and Me)
+' Copyright (c) 2026 Limorazp
 ' SPDX-License-Identifier: MIT
 '
 ' 本文件以 MIT 许可证开源发布, 完整条款见仓库根目录 LICENSE。

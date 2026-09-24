@@ -1,7 +1,7 @@
 '==============================================================================
 ' CST-LinXi-Macro  -  CST eigenmode slow-wave structure user-defined watch macro
 '
-' Copyright (c) 2026 She and Me
+' Copyright (c) 2026 Limorazp
 ' SPDX-License-Identifier: MIT
 '
 ' Released under the MIT License. Permission is hereby granted, free of charge,
@@ -31,6 +31,7 @@ Private Const KC_SANITY_MAX     As Double = 1E+08
 
 Private Const MAX_PATH_SAFE        As Integer = 250
 Private Const FILE_TAG_FIXED       As Integer = 24
+Private Const MIN_FILE_TAG_BUDGET  As Integer = 18
 
 Private Enum LogLevel
     llDebug = 0
@@ -62,7 +63,7 @@ Private Const F_BETA    As String = "beta"
 Private Const F_ZPIERCE As String = "ZpierceAvg"
 Private Const F_VPHASE  As String = "vphase"
 Private Const F_PHASE   As String = "phase"
-Private Const F_RESULT_GROUP   As String = "User-Defined Macro Result"
+Private Const F_RESULT_GROUP   As String = "PlotOutput LinXi Macro Result"
 
 Private Const CFG_FILE_NAME    As String = "LinXi.ini"
 Private Const CFG_SECTION_VER  As String = "VERSION"
@@ -70,6 +71,8 @@ Private Const CFG_SECTION_VER  As String = "VERSION"
 Private Const PW_SRC_FROM_EH  As Integer = 1
 Private Const PW_SRC_FROM_CST As Integer = 2
 Private Const PW_SRC_INVALID  As Integer = 0
+Private Const PW_SRC_INDIRECT As Integer = 0
+Private Const PW_SRC_NATIVE   As Integer = 1
 
 Private Const REGION_BOTH     As Integer = 0
 Private Const REGION_FORWARD  As Integer = 1
@@ -78,6 +81,7 @@ Private Const REGION_BACKWARD As Integer = 2
 Private Const ENABLE_FLAG_SCALE  As Long = 10
 Private Const ENABLE_FLAG_EPS    As Double = 1E-06
 
+
 Private g_bIsTetra      As Boolean
 Private g_bFirstFieldLog As Boolean
 Private g_bAllModes     As Boolean
@@ -85,7 +89,8 @@ Private g_abModeFlag()  As Boolean
 Private g_bGridFailed   As Boolean
 Private g_abPhaseDead() As Boolean
 Private g_anPhaseFlat() As Long
-Private g_abPhaseWarned() As Boolean
+Private g_abPhaseFlatWarned() As Boolean
+Private g_abKcWarned() As Boolean
 Private g_nPhaseStateModes As Long
 
 Private g_sPointsFile   As String
@@ -153,6 +158,7 @@ Private g_n1 As Long
 Private g_n2 As Long
 Private g_nCross As Long
 Private g_nL As Long
+
 
 Declare Function CCoreVersion Lib "LinXi.dll" (ByVal author As String) As Long
 
@@ -242,6 +248,7 @@ Declare Function CBuildCurveFiles Lib "LinXi.dll" ( _
     ByRef nBetaPt As Long, ByRef nPhasePt As Long, _
     ByRef nVpPt As Long, ByRef nKcPt As Long) As Long
 
+
 Private Sub ParameterSweepWatch(ByVal action As Integer)
 
     PreConfiguration action
@@ -271,7 +278,15 @@ Private Sub PreConfiguration(ByVal action As Integer)
 
     g_nFileTagBudget = MAX_PATH_SAFE - Len(g_sTemp) - FILE_TAG_FIXED
 
-    If action = 0 Then InitLogFile
+    If action = 0 Then
+        InitLogFile
+        If g_nFileTagBudget < MIN_FILE_TAG_BUDGET Then
+            LogCritical "Project path too long: Temp path length = " & Len(g_sTemp) & _
+                " characters, leaving only " & g_nFileTagBudget & " characters for the file tag (at least " & _
+                MIN_FILE_TAG_BUDGET & " are required). Move the project to a shorter directory and run again", True
+            End
+        End If
+    End If
 
     If Not g_bCfgOK Then AbortOnConfigError
 
@@ -295,14 +310,14 @@ Private Sub PreConfiguration(ByVal action As Integer)
             SetParameterDescription "Macro_SweepWatch_Enable", EnableFlagText(iFlagSrc, iFlagRegion)
         Else
             bNeedSetupDialog = True
-            g_iPowerFlowSrc = 0
+            g_iPowerFlowSrc = PW_SRC_INDIRECT
             g_iRegionMode = REGION_BOTH
             LogWarning "  Macro_SweepWatch_Enable = " & Format(Macro_flag, "0.0####") & _
                 " is not a valid enable-flag value; the parameter setup dialog will be shown again for this run"
         End If
     Else
         bNeedSetupDialog = True
-        g_iPowerFlowSrc = 0
+        g_iPowerFlowSrc = PW_SRC_INDIRECT
         g_iRegionMode = REGION_BOTH
     End If
 
@@ -381,7 +396,6 @@ Private Sub PreConfiguration(ByVal action As Integer)
 
         Dim iIdx As Integer
     Else
-
         If DoesParameterExist("Kc_RefPos_x") Then
             pos(1) = RestoreParameter("Kc_RefPos_x")
         End If
@@ -535,7 +549,8 @@ Private Sub ProcessingPhase()
     If g_iNumModes > 0 And g_nPhaseStateModes <> g_iNumModes Then
         ReDim g_abPhaseDead(1 To g_iNumModes)
         ReDim g_anPhaseFlat(1 To g_iNumModes)
-        ReDim g_abPhaseWarned(1 To g_iNumModes)
+        ReDim g_abPhaseFlatWarned(1 To g_iNumModes)
+        ReDim g_abKcWarned(1 To g_iNumModes)
         g_nPhaseStateModes = g_iNumModes
     End If
 
@@ -549,8 +564,8 @@ Private Sub ProcessingPhase()
     With ParameterSweep
         nParams = .GetNumberOfVaryingParameters
 
-        bFound      = False
-        nPhaseIndex = -1
+        bFound       = False
+        nPhaseIndex  = -1
         g_sGroupPath = ""
         g_sGroupKey  = ""
 
@@ -725,17 +740,14 @@ Private Sub ProcessingPhase()
 
         If bFreqFlat Then
             g_anPhaseFlat(iMode) = g_anPhaseFlat(iMode) + 1
-            If Not g_abPhaseWarned(iMode) Then
-                g_abPhaseWarned(iMode) = True
+            If Not g_abPhaseFlatWarned(iMode) Then
+                g_abPhaseFlatWarned(iMode) = True
                 LogWarning "  Mode " & sMode & ": frequency does not change with phase (f = " & _
                     Format(dFreqHz, "0.000E+00") & " " & Units.GetFrequencyUnit & ", relative change " & _
                     Format(dFreqRel, "0.0E+00") & "). Usual cause: the solver is not applying the phase difference to the " & _
-                    g_sDirLabel & " direction periodic boundary (every sweep point solves the same mode), or the mode" & _
-                    " is close to a Pi point. In both cases the net power flow is near zero, so the interaction impedance" & _
-                    " is meaningless and has been marked invalid"
+                    g_sDirLabel & " is close to a Pi point. In both cases the net power flow is near zero, so the interaction impedance is meaningless and has been marked invalid"
             ElseIf g_anPhaseFlat(iMode) <= FREQ_FLAT_MAX Then
-                LogInfo "  Mode " & sMode & ": frequency still does not change with phase (" & _
-                    g_anPhaseFlat(iMode) & " consecutive points); the interaction impedance at this point is marked invalid"
+                LogInfo "  Mode " & sMode & ": frequency still does not change with phase (" & g_anPhaseFlat(iMode) & " consecutive points); the interaction impedance at this point is marked invalid"
             End If
             If g_anPhaseFlat(iMode) >= FREQ_FLAT_MAX And Not g_abPhaseDead(iMode) Then
                 g_abPhaseDead(iMode) = True
@@ -749,7 +761,7 @@ Private Sub ProcessingPhase()
             g_anPhaseFlat(iMode) = 0
             If g_abPhaseDead(iMode) Then
                 g_abPhaseDead(iMode) = False
-                g_abPhaseWarned(iMode) = False
+                g_abPhaseFlatWarned(iMode) = False
                 LogInfo "  Mode " & sMode & ": frequency changes with phase again; interaction impedance calculation is restored for this mode"
             End If
         End If
@@ -785,7 +797,7 @@ Private Sub ProcessingPhase()
                 " GHz, computing..."
 
             Dim bFieldsOK As Boolean
-            If g_iPowerFlowSrc = 1 Then
+            If g_iPowerFlowSrc = PW_SRC_NATIVE Then
                 bFieldsOK = PreparePowerFieldFromCST(iMode, sMode)
             Else
                 bFieldsOK = LoadFieldDataFromEH(iMode)
@@ -798,14 +810,14 @@ Private Sub ProcessingPhase()
                     Format(dVim, "0.000E+00") & "), |V|^2 = " & Format(dVSq, "0.000E+00") & _
                     ", E_abs = " & Format(dEabs, "0.000E+00")
 
-                If g_iPowerFlowSrc = 1 Then
+                If g_iPowerFlowSrc = PW_SRC_NATIVE Then
                     ComputePowerFlowFromCST dPower
                 Else
                     ComputePowerFlowFromEH dPower
                 End If
                 LogInfo "    Power flow: P = " & Format(dPower, "0.000E+00") & " W"
 
-                If g_iPowerFlowSrc = 0 And dPower = 0# Then
+                If g_iPowerFlowSrc = PW_SRC_INDIRECT And dPower = 0# Then
                     LogWarning "    Note: the power flow is 0 with the E/H method. Make sure the H field of Mode " & sMode & _
                         " can be selected in the result tree -- if the H-field export fails, Re(E x H*) stays 0."
                 End If
@@ -823,8 +835,8 @@ Private Sub ProcessingPhase()
                 Else
                     dKc = dVSq / (2# * dBeta * dBeta * dPower)
                     If dKc > KC_SANITY_MAX Then
-                        If Not g_abPhaseWarned(iMode) Then
-                            g_abPhaseWarned(iMode) = True
+                        If Not g_abKcWarned(iMode) Then
+                            g_abKcWarned(iMode) = True
                             LogWarning "    Power flow is abnormally small: P = " & Format(dPower, "0.000E+00") & " W, giving Kc = " & _
                                 Format(dKc, "0.000E+00") & " Ohm, above the sanity limit " & _
                                 Format(KC_SANITY_MAX, "0.000E+00") & " Ohm; the interaction impedance at this point is marked invalid"
@@ -892,7 +904,7 @@ Private Sub FinalizationPhase()
     Dim fGroup As Integer
 
     On Error Resume Next
-    If Dir(g_sTemp & "_groups.txt") <> "" Then
+    If FileExists(g_sTemp & "_groups.txt") Then
         fGroup = FreeFile
         Open g_sTemp & "_groups.txt" For Input As #fGroup
         Do While Not EOF(fGroup)
@@ -1348,7 +1360,7 @@ Private Sub CheckCoreLibrary()
     Dim sDllPath As String
     sDllPath = GetInstallPath & "\AMD64\LinXi.dll"
 
-    If Dir(sDllPath) = "" Then
+    If Not FileExists(sDllPath) Then
         MsgBox "Error: cannot load the core computation library LinXi.dll." & vbCrLf & _
             "Core computation library file not found:" & vbCrLf & sDllPath & vbCrLf & vbCrLf & _
             "Please check:" & vbCrLf & _
@@ -1579,7 +1591,7 @@ Private Function DialogFunc(ByVal DlgItem$, ByVal Action%, ByVal SuppValue&) As 
                      "selectMode9", "selectMode10", "selectMode11", "selectMode12", _
                      "selectMode13", "selectMode14", "selectMode15", "selectMode16", _
                      "selectMode17", "selectMode18", "selectMode19", "selectMode20"
-                    DlgValue "Group1", 1
+                    If DlgValue("Group1") <> 1 Then DlgValue "Group1", 1
                     DialogFunc = True
                 Case "Group2"
                     If SuppValue = 1 Then
@@ -1763,9 +1775,9 @@ Private Function ShowParamsDialog(ByRef pos() As Double, _
         End Select
 
         If dlg.Group2 = 1 Then
-            g_iPowerFlowSrc = 1
+            g_iPowerFlowSrc = PW_SRC_NATIVE
         Else
-            g_iPowerFlowSrc = 0
+            g_iPowerFlowSrc = PW_SRC_INDIRECT
         End If
 
         Select Case dlg.Group3
@@ -1876,7 +1888,7 @@ Private Function ShowParamsDialog(ByRef pos() As Double, _
             End If
             sConfirmMsg = sConfirmMsg & "Reference X: " & pos(1) & " " & g_sUnit & vbCrLf
             sConfirmMsg = sConfirmMsg & "Reference Y: " & pos(2) & " " & g_sUnit & vbCrLf
-            sConfirmMsg = sConfirmMsg & "Reference Z: " & pos(3) & " " & g_sUnit & vbCrLf & vbCrLf
+            sConfirmMsg = sConfirmMsg & "Reference Z: " & pos(3) & " " & g_sUnit & vbCrLf  & vbCrLf
             sConfirmMsg = sConfirmMsg & "Power-flow calculation: using the "& PowerFlowSrcText(g_iPowerFlowSrc) & vbCrLf
             sConfirmMsg = sConfirmMsg & "Region: " & RegionText(g_iRegionMode) & vbCrLf & vbCrLf
             sConfirmMsg = sConfirmMsg & "Continue?"
@@ -1893,27 +1905,30 @@ End Function
 
 Private Sub ShowAboutDialog()
 
-    Begin Dialog UserDialog 1160, 370, "CST Eigenmode Slow-Wave Structure User Watch Macro --- About  version " & g_sVersionString & " (" & g_sVersionLabel & ")"
+    Begin Dialog UserDialog 1160, 436, "CST Eigenmode Slow-Wave Structure User Watch Macro --- About  version " & g_sVersionString & " (" & g_sVersionLabel & ")"
 
-        Text 416, 20, 328, 14, "Normalized phase velocity / interaction impedance / Brillouin diagram calculation"
-        Text  48, 42, 660, 14, "[ Author ]  " & g_sAuthorName
-        Text  48, 64, 1000, 14, "[ Release date ]  " & g_sReleaseDate & "      Platform: " & g_sPlatform
+        Text 256, 20, 648, 14, "Normalized phase velocity / interaction impedance / Brillouin diagram calculation"
+        Text  48, 42, 1064, 14, "[ Author ]  " & g_sAuthorName
+        Text  48, 64, 1064, 14, "[ Release date ]  " & g_sReleaseDate & "      Platform: " & g_sPlatform
 
-        GroupBox 20, 86, 1120, 87, "[ Disclaimer ]"
+        GroupBox 20, 86, 1120, 131, "[ Disclaimer ]"
 
-        Text 48, 107, 1072, 14, "1. The author is responsible for the technical implementation of the macro."
-        Text 48, 129, 1072, 14, "2. Released under the MIT License: free to use, modify, redistribute and use commercially, provided the original copyright and license notice are kept (see the accompanying LICENSE)."
-        Text 48, 151, 1072, 14, "3. The code is provided ""as is"" without any guarantee of the absolute accuracy of the results; users must verify critical simulation results themselves, and the author accepts no liability arising from its use."
+        Text  48, 107, 1064, 14, "1. The author is responsible for the technical implementation of the macro."
+        Text  48, 129, 1064, 14, "2. Released under the MIT License: free to use, modify, redistribute and use commercially, provided"
+        Text  48, 151, 1064, 14, "   the original copyright and license notice are kept (see the accompanying LICENSE)."
+        Text  48, 173, 1064, 14, "3. The code is provided ""as is"" without any guarantee of the absolute accuracy of the results; users must"
+        Text  48, 195, 1064, 14, "   verify critical simulation results themselves, and the author accepts no liability arising from its use."
 
-        GroupBox 20, 181, 1120, 131, "[ Prerequisites ]"
+        GroupBox 20, 225, 1120, 153, "[ Prerequisites ]"
 
-        Text 48, 202, 1072, 14, "1. Use the tetrahedral or hexahedral mesh algorithm; the hexahedral JDM algorithm is recommended because it is accurate."
-        Text 48, 224, 1072, 14, "2. Periodic boundary conditions are set on the slow-wave structure."
-        Text 48, 246, 1072, 14, "3. The parameter sweep list must contain the phase parameter."
-        Text 48, 268, 1072, 14, "4. Slow Wave Userdefined Watch has been added to the CST macro commands."
-        Text 48, 290, 1072, 14, "5. The CST version is greater than or equal to " & g_sCstVerMin & " and not greater than " & g_sCstVerMax & ", and the core computation library LinXi.dll is deployed correctly."
+        Text  48, 246, 1064, 14, "1. Use the tetrahedral or hexahedral mesh algorithm; the hexahedral JDM algorithm is recommended because it is accurate."
+        Text  48, 268, 1064, 14, "2. Periodic boundary conditions are set on the slow-wave structure."
+        Text  48, 290, 1064, 14, "3. The parameter sweep list must contain the phase parameter."
+        Text  48, 312, 1064, 14, "4. Slow Wave Userdefined Watch has been added to the CST macro commands."
+        Text  48, 334, 1064, 14, "5. The CST version is greater than or equal to " & g_sCstVerMin & " and not greater than " & g_sCstVerMax & ","
+        Text  48, 356, 1064, 14, "   and the core computation library LinXi.dll is deployed correctly."
 
-        OKButton 530, 320, 100, 42
+        OKButton 530, 386, 100, 42
 
     End Dialog
 
@@ -1924,50 +1939,53 @@ End Sub
 
 Private Sub ShowHelpDialog()
 
-    Begin Dialog UserDialog 1160, 645, "CST Eigenmode Slow-Wave Structure User Watch Macro --- Help  version " & g_sVersionString & " (" & g_sVersionLabel & ")"
+    Begin Dialog UserDialog 1160, 905, "CST Eigenmode Slow-Wave Structure User Watch Macro --- Help  version " & g_sVersionString & " (" & g_sVersionLabel & ")"
 
-        Text 428, 20, 264, 14, "CST Eigenmode Sweep Macro Help"
+        Text 460, 20, 240, 14, "CST Eigenmode Sweep Macro Help"
 
-        GroupBox 20, 42, 520, 295, "[ Parameters ]"
+        GroupBox 20, 42, 1120, 241, "[ Parameters ]"
 
-        Text  36,  63, 484, 14, "1. Macro_SweepWatch_Enable = macro enable flag + power-flow calculation method + region"
-        Text  56,  91, 464, 14, "， integer part: 1 = indirect power-flow method; 2 = native power-flow method; 0 = disabled."
-        Text  56, 119, 464, 14, "， decimal digit: 0 = both regions; 1 = forward-wave region only; 2 = backward-wave region only."
-        Text  56, 147, 464, 14, "， the forward-wave region requires the frequency to rise with phase, the backward-wave region requires it to fall."
-        Text  56, 175, 464, 14, "， any other value (for example 1.3 or 1.11) makes the parameter setup dialog appear again on the next run."
-        Text  36, 203, 484, 14, "2. Kc_RefPos_x / y / z = 3D coordinates of the interaction impedance reference point"
-        Text  56, 231, 464, 14, "， the periodic direction is locked to the centre of the computation domain and cannot be changed."
-        Text  56, 259, 464, 14, "， the non-periodic directions can be set freely by the user."
-        Text  36, 287, 484, 14, "3. Macro_Modex (x = 1, 2, 3 ...) = interaction impedance calculation flag"
-        Text  56, 315, 464, 14, "， the macro only checks whether this parameter exists in the parameter list, not its value."
+        Text  48,  63, 1064, 14, "1. Macro_SweepWatch_Enable = macro enable flag + power-flow calculation method + region"
+        Text  68,  85, 1044, 14, "， integer part: 1 = indirect power-flow method; 2 = native power-flow method; 0 = disabled."
+        Text  68, 107, 1044, 14, "， decimal digit: 0 = both regions; 1 = forward-wave region only; 2 = backward-wave region only."
+        Text  68, 129, 1044, 14, "， the forward-wave region requires the frequency to rise with phase, the backward-wave region requires it to fall."
+        Text  68, 151, 1044, 14, "， any other value (for example 1.3 or 1.11) makes the parameter setup dialog appear again on the next run."
+        Text  48, 173, 1064, 14, "2. Kc_RefPos_x / y / z = 3D coordinates of the interaction impedance reference point"
+        Text  68, 195, 1044, 14, "， the periodic direction is locked to the centre of the computation domain and cannot be changed."
+        Text  68, 217, 1044, 14, "， the non-periodic directions can be set freely by the user."
+        Text  48, 239, 1064, 14, "3. Macro_Modex (x = 1, 2, 3 ...) = interaction impedance calculation flag"
+        Text  68, 261, 1044, 14, "， the macro only checks whether this parameter exists in the parameter list, not its value."
 
-        GroupBox 560, 42, 580, 295, "[ Parameter setup and logging ]"
+        GroupBox 20, 291, 1120, 219, "[ Parameter setup and logging ]"
 
-        Text 576,  63, 548, 14, "-- Parameter setup"
-        Text 576,  91, 548, 14, "， tick the modes or type the mode numbers as the dialog prompts."
-        Text 576, 119, 548, 14, "， mode numbers beyond the solver's eigenmode count are truncated automatically."
-        Text 576, 147, 548, 14, "， two power-flow calculation methods can be selected."
-        Text 576, 175, 548, 14, "， the region can be the forward-wave one, the backward-wave one, or both."
-        Text 576, 203, 548, 14, "， with both regions selected, the frequency direction is not checked at all."
-        Text 576, 231, 548, 14, "-- Logging"
-        Text 576, 259, 548, 14, "， log file: project directory \Temp\macro_log.txt"
-        Text 576, 287, 548, 14, "， records the whole sweep (progress and error messages) to help with troubleshooting."
+        Text  48, 312, 1064, 14, "-- Parameter setup"
+        Text  68, 334, 1044, 14, "， tick the modes or type the mode numbers as the dialog prompts."
+        Text  68, 356, 1044, 14, "， mode numbers beyond the solver's eigenmode count are truncated automatically."
+        Text  68, 378, 1044, 14, "， two power-flow calculation methods can be selected."
+        Text  68, 400, 1044, 14, "， the region can be the forward-wave one, the backward-wave one, or both."
+        Text  68, 422, 1044, 14, "， with both regions selected, the frequency direction is not checked at all."
+        Text  48, 444, 1064, 14, "-- Logging"
+        Text  68, 466, 1044, 14, "， log file: project directory \Temp\macro_log.txt"
+        Text  68, 488, 1044, 14, "， records the whole sweep (progress and error messages) to help with troubleshooting."
 
-        GroupBox 20, 347, 1120, 239, "[ Important notes ]"
+        GroupBox 20, 518, 1120, 329, "[ Important notes ]"
 
-        Text  36, 368, 528, 14, "， the JDM algorithm is recommended for the solver because it is accurate."
-        Text 592, 368, 528, 14, "， with the JDM algorithm, eigenmode names must not contain a decimal point."
-        Text  36, 396, 528, 14, "， do not operate the current window manually during the sweep."
-        Text 592, 396, 528, 14, "， clear the existing results before repeating a sweep, otherwise the calculated results are lost."
-        Text  36, 424, 528, 14, "， one window, one task; use several CST windows for several tasks."
-        Text 592, 424, 528, 14, "， to pause, just cancel the sweep task."
-        Text  36, 452, 1088, 14, "， deleting the slow-wave structure user-watch step from the history tree does not remove the macro itself."
-        Text  36, 480, 1088, 14, "， do not open the Fields on Plane or Cutting Plane views of the electric or magnetic field in an eigenmode project."
-        Text  36, 508, 1088, 14, "， the parameters the macro relies on - Macro_SweepWatch_Enable, Macro_Modex and the periodic-direction Kc_RefPos - must not be swept."
-        Text  36, 536, 1088, 14, "， deleting Macro_SweepWatch_Enable makes the parameter dialog appear again on the next run so that the power-flow method and the region can be chosen again."
-        Text  36, 564, 1088, 14, "， keep the project in a short directory so that the path stays inside the Windows 260-character limit and the data files can be read and written."
+        Text  68, 539, 1044, 14, "， the JDM algorithm is recommended for the solver because it is accurate."
+        Text  68, 561, 1044, 14, "， with the JDM algorithm, eigenmode names must not contain a decimal point."
+        Text  68, 583, 1044, 14, "， do not operate the current window manually during the sweep."
+        Text  68, 605, 1044, 14, "， clear the existing results before repeating a sweep, otherwise the calculated results are lost."
+        Text  68, 627, 1044, 14, "， one window, one task; use several CST windows for several tasks."
+        Text  68, 649, 1044, 14, "， to pause, just cancel the sweep task."
+        Text  68, 671, 1044, 14, "， deleting the slow-wave structure user-watch step from the history tree does not remove the macro itself."
+        Text  68, 693, 1044, 14, "， do not open the Fields on Plane or Cutting Plane views of the electric or magnetic field in an eigenmode project."
+        Text  68, 715, 1044, 14, "， the parameters the macro relies on - Macro_SweepWatch_Enable, Macro_Modex and the"
+        Text  68, 737, 1044, 14, "  periodic-direction Kc_RefPos - must not be swept."
+        Text  68, 759, 1044, 14, "， deleting Macro_SweepWatch_Enable makes the parameter dialog appear again on the next run so that"
+        Text  68, 781, 1044, 14, "  the power-flow method and the region can be chosen again."
+        Text  68, 803, 1044, 14, "， keep the project in a short directory so that the path stays inside the Windows 260-character limit"
+        Text  68, 825, 1044, 14, "  and the data files can be read and written."
 
-        OKButton 530, 595, 100, 42
+        OKButton 530, 855, 100, 42
 
     End Dialog
 
@@ -2016,6 +2034,7 @@ Private Function DecodeEnableFlag(ByVal dValue As Double, _
     Dim nCode As Long
     Dim nMethod As Long
     Dim nRegionCode As Long
+    Dim nSrcCode As Long
 
     DecodeEnableFlag = False
     iSrc = 0
@@ -2030,10 +2049,11 @@ Private Function DecodeEnableFlag(ByVal dValue As Double, _
     nMethod = nCode \ ENABLE_FLAG_SCALE
     nRegionCode = nCode Mod ENABLE_FLAG_SCALE
 
-    If nMethod <> PW_SRC_FROM_EH And nMethod <> PW_SRC_FROM_CST Then Exit Function
+    nSrcCode = nMethod - 1
+    If nSrcCode <> PW_SRC_INDIRECT And nSrcCode <> PW_SRC_NATIVE Then Exit Function
     If nRegionCode < REGION_BOTH Or nRegionCode > REGION_BACKWARD Then Exit Function
 
-    iSrc = CInt(nMethod - 1)
+    iSrc = CInt(nSrcCode)
     iRegion = CInt(nRegionCode)
     DecodeEnableFlag = True
 End Function
@@ -2088,7 +2108,11 @@ Private Function MakeFileTag(ByVal sKey As String, ByVal nIndex As Long, _
         Exit Function
     End If
 
-    If nBudget < 12 Then nBudget = 12
+    If nBudget < MIN_FILE_TAG_BUDGET Then
+        MakeFileTag = "_g" & CStr(nIndex)
+        Exit Function
+    End If
+
     sRead = SafeNamePart(sKey)
     If Len(sRead) > nBudget - 6 Then sRead = Left$(sRead, nBudget - 6)
 
@@ -2103,7 +2127,7 @@ Private Function LookupGroupIndex(ByVal sKey As String, ByRef nCount As Long) As
     nCount = 0
     LookupGroupIndex = 0
     If Len(sKey) = 0 Then Exit Function
-    If Dir(g_sTemp & "_groups.txt") = "" Then Exit Function
+    If Not FileExists(g_sTemp & "_groups.txt") Then Exit Function
 
     Err.Clear
     On Error Resume Next
@@ -2177,17 +2201,34 @@ Private Sub DeleteTreeItemRecursive(ByVal sPath As String)
     End If
 End Sub
 
+Private Function FileExists(ByVal sPath As String) As Boolean
+    Dim nAttr As Long
+
+    FileExists = False
+    If Len(sPath) = 0 Then Exit Function
+
+    Err.Clear
+    On Error Resume Next
+    nAttr = GetAttr(sPath)
+    If Err.Number = 0 Then FileExists = True
+    Err.Clear
+    On Error GoTo 0
+End Function
+
 Private Sub DeleteFilesByPattern(ByVal sPattern As String)
     Dim sDir As String, sFile As String
-    On Error Resume Next
+    Dim nCut As Long
 
-    sDir = Left(sPattern, InStrRev(sPattern, "\"))
+    nCut = InStrRev(sPattern, "\")
+    If nCut = 0 Then Exit Sub
+    sDir = Left$(sPattern, nCut)
+
+    On Error Resume Next
     sFile = Dir(sPattern)
     Do While sFile <> ""
         Kill sDir & sFile
         sFile = Dir()
     Loop
-
     On Error GoTo 0
 End Sub
 
@@ -2819,7 +2860,8 @@ Private Sub ResetPhaseSweepState()
     For i = 1 To g_nPhaseStateModes
         g_abPhaseDead(i) = False
         g_anPhaseFlat(i) = 0
-        g_abPhaseWarned(i) = False
+        g_abPhaseFlatWarned(i) = False
+        g_abKcWarned(i) = False
     Next i
 End Sub
 
@@ -2848,7 +2890,7 @@ Private Sub InitLogFile()
     LogInit
     If Len(g_sLogFile) = 0 Then Exit Sub
 
-    If Dir(g_sLogFile) = "" Then CreateEmptyFile g_sLogFile
+    If Not FileExists(g_sLogFile) Then CreateEmptyFile g_sLogFile
 
     Dim fTime As Integer
     fTime = FreeFile

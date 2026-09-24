@@ -1,37 +1,41 @@
 '==============================================================================
-' CST-LinXi-Macro  -  version check (She.bas)
+' 林夕宏代码 (CST-LinXi-Macro)  —  版本检查 (She.bas)
 '
-' Copyright (c) 2026 She and Me
+' Copyright (c) 2026 Limorazp
 ' SPDX-License-Identifier: MIT
 '
-' Released under the MIT License; full text: see LICENSE in the repository root.
-'
-'------------------------------------------------------------------------------
-' Deployed as: Check LinXi Version.mcr
+' 本文件以 MIT 许可证开源发布, 完整条款见仓库根目录 LICENSE。
 '
 '==============================================================================
 
 Option Explicit
 
+' 核心计算库校验口令与文件名
 Private Const CORE_AUTHOR   As String = " Lin Xi and She & Me "
 Private Const DLL_FILE_NAME As String = "LinXi.dll"
 
 Declare Function CCoreVersion Lib "LinXi.dll" (ByVal author As String) As Long
 
+' 外部配置文件 (版本信息的唯一来源, 必须为 ANSI/GBK 编码)
 Private Const CFG_FILE_NAME   As String = "LinXi.ini"
 Private Const CFG_SECTION_VER As String = "VERSION"
 
-Private Const DLL_OK        As Integer = 0
-Private Const DLL_NOT_FOUND As Integer = 1
-Private Const DLL_CALL_FAIL As Integer = 2
-Private Const DLL_TOO_OLD   As Integer = 3
+' ---- DLL 状态码 ----
+Private Const DLL_OK        As Integer = 0     ' 正常
+Private Const DLL_NOT_FOUND As Integer = 1     ' 文件不存在
+Private Const DLL_CALL_FAIL As Integer = 2     ' 调用失败
+Private Const DLL_TOO_OLD   As Integer = 3     ' 版本低于最低要求
 
-Private g_sVersionString As String
-Private g_sVersionLabel  As String
-Private g_nDllMinVer     As Long
-Private g_sCfgPath       As String
-Private g_sProblems      As String
+' ---- 全局状态 ----
+Private g_sVersionString As String             ' 宏程序版本号
+Private g_sVersionLabel  As String             ' 版本标签
+Private g_nDllMinVer     As Long               ' DLL 最低版本要求
+Private g_sCfgPath       As String             ' 实际命中的配置文件路径
+Private g_sProblems      As String             ' 累积的问题清单 (空 = 一切正常)
 
+'==============================================================================
+' 宏入口: 读配置 -> 查 DLL 版本 -> 无问题则显示版本信息, 否则显示问题清单
+'==============================================================================
 Sub Main()
     Dim bCfgOK As Boolean
     Dim iDllStatus As Integer
@@ -56,21 +60,22 @@ Sub Main()
     End If
 End Sub
 
+' 一切正常时显示的版本信息窗口
 Private Sub ShowVersionDialog(ByVal nDllVer As Long)
     Dim sCstVer As String
 
     sCstVer = CstVersionText()
 
-    Begin Dialog UserDialog 440, 204, "LinXi Macro - Program version information"
+    Begin Dialog UserDialog 440, 204, "林夕宏代码程序版本信息"
 
-        Text 78, 12, 290, 16, "CST slow-wave structure user watch macro"
-        Text 128, 32, 200, 14, "VERSION INFORMATION"
+        Text 108, 12, 290, 16, "CST 慢波结构用户监视器宏程序"
+        Text 178, 32, 200, 14, "版  本  信  息"
 
         GroupBox 20, 56, 400, 88, ""
 
-        Text  32,  70, 376, 14, "Macro version : " & g_sVersionString & "  (" & g_sVersionLabel & ")"
-        Text  32,  92, 376, 14, "Core library : " & DLL_FILE_NAME & " v" & CStr(nDllVer) & "  (minimum required v" & CStr(g_nDllMinVer) & ")"
-        Text  32, 114, 376, 14, "CST version : " & sCstVer
+        Text  32,  70, 376, 14, "宏程序版本 : " & g_sVersionString & "  (" & g_sVersionLabel & ")"
+        Text  32,  92, 376, 14, "核心计算库 : " & DLL_FILE_NAME & " v" & CStr(nDllVer) & "  (最低版本要求 v" & CStr(g_nDllMinVer) & ")"
+        Text  32, 114, 376, 14, "CST 版本 : " & sCstVer
 
         OKButton 170, 158, 100, 42
 
@@ -80,42 +85,46 @@ Private Sub ShowVersionDialog(ByVal nDllVer As Long)
     Dialog dlg
 End Sub
 
+' 出现问题时显示的诊断窗口: 问题清单 + 已取得的信息 + 排查建议
 Private Sub ShowProblemDialog(ByVal bCfgOK As Boolean, ByVal iDllStatus As Integer, _
     ByVal nDllVer As Long, ByVal sDllNote As String)
 
     Dim sMsg As String
 
-    sMsg = "The following problems were detected:" & vbCrLf & vbCrLf & g_sProblems & vbCrLf & vbCrLf & _
-        "Information obtained:" & vbCrLf & _
-        "  Macro version : " & VersionText(bCfgOK) & vbCrLf & _
-        "  Core library  : " & DllText(iDllStatus, nDllVer, sDllNote) & vbCrLf & _
-        "  CST version   : " & CstVersionText() & vbCrLf & vbCrLf & _
-        "Note: re-running the installer restores the default deployment;" & vbCrLf & _
-        "      if LinXi.ini was just edited, make sure it is saved as ANSI/GBK."
+    sMsg = "检测到以下问题:" & vbCrLf & vbCrLf & g_sProblems & vbCrLf & vbCrLf & _
+        "已取得的信息:" & vbCrLf & _
+        "  宏程序版本 : " & VersionText(bCfgOK) & vbCrLf & _
+        "  核心计算库 : " & DllText(iDllStatus, nDllVer, sDllNote) & vbCrLf & _
+        "  CST 版本   : " & CstVersionText() & vbCrLf & vbCrLf & _
+        "提示: 重新运行安装脚本(双击我自动安装.bat)可恢复默认部署;" & vbCrLf & _
+        "      若刚编辑过 LinXi.ini, 请确认它保存为 ANSI/GBK 编码。"
 
-    MsgBox sMsg, vbCritical, "Version check - problems detected"
+    MsgBox sMsg, vbCritical, "版本查询 - 检测到问题"
 End Sub
 
+' 宏程序版本文本; 配置未取到时返回"(未取得)"
 Private Function VersionText(ByVal bOK As Boolean) As String
     If bOK Then
         VersionText = g_sVersionString & " (" & g_sVersionLabel & ")"
     Else
-        VersionText = "(not available)"
+        VersionText = "(未取得)"
     End If
 End Function
 
+' 核心计算库的版本描述文本 (按状态区分五种情形)
 Private Function DllText(ByVal iStatus As Integer, ByVal nVer As Long, ByVal sNote As String) As String
     If iStatus = DLL_OK Then
-        DllText = DLL_FILE_NAME & " v" & CStr(nVer) & " (minimum required v" & CStr(g_nDllMinVer) & ")"
+        DllText = DLL_FILE_NAME & " v" & CStr(nVer) & " (最低要求 v" & CStr(g_nDllMinVer) & ")"
     ElseIf nVer > 0 Then
-        DllText = DLL_FILE_NAME & " v" & CStr(nVer) & " -- " & sNote
+        DllText = DLL_FILE_NAME & " v" & CStr(nVer) & " —— " & sNote
     ElseIf Len(sNote) > 0 Then
         DllText = DLL_FILE_NAME & " (" & sNote & ")"
     Else
-        DllText = "(not available)"
+        DllText = "(未取得)"
     End If
 End Function
 
+' 从 LinXi.ini 读取版本号、版本标签与 DLL 最低版本, 逐项校验后写入全局变量
 Private Function LoadVersionFromIni() As Boolean
     Dim sVer As String
     Dim sLbl As String
@@ -128,34 +137,34 @@ Private Function LoadVersionFromIni() As Boolean
     sDllMin = ""
 
     If g_sCfgPath = "" Then
-        AddProblem "None of the 4 candidate locations contains the external configuration file " & CFG_FILE_NAME & _
-            ", so the current macro version cannot be determined." & vbCrLf & _
-            "    The macro searched for it in this order:" & vbCrLf & CfgCandidateList()
+        AddProblem "4 个候选位置均未找到外部配置文件 " & CFG_FILE_NAME & _
+            ", 因而无法确定当前宏程序版本。" & vbCrLf & _
+            "    宏按下列顺序查找该文件:" & vbCrLf & CfgCandidateList()
         Exit Function
     End If
 
     If Not CfgRead(g_sCfgPath, sVer, sLbl, sDllMin) Then
-        AddProblem "The external configuration file cannot be read (in use or insufficient permissions):" & vbCrLf & _
+        AddProblem "外部配置文件无法读取(可能被占用或权限不足):" & vbCrLf & _
             "    " & g_sCfgPath
         Exit Function
     End If
 
     If Len(sVer) = 0 Or Len(sLbl) = 0 Or Len(sDllMin) = 0 Then
-        AddProblem "The [Version] section of the configuration file is missing the mandatory keys VersionString / VersionLabel / DllMinVersion:" & vbCrLf & _
+        AddProblem "配置文件中未读到 [Version] 节必填键 VersionString / VersionLabel / DllMinVersion:" & vbCrLf & _
             "    " & g_sCfgPath & vbCrLf & _
-            "    If the file was just edited, make sure it is saved as ANSI/GBK -- saving it as UTF-8 makes every key unreadable."
+            "    若该文件刚被编辑过, 请确认保存为 ANSI/GBK 编码 —— 另存为 UTF-8 会读不到任何键。"
         Exit Function
     End If
 
     If Not IsNumeric(sDllMin) Then
-        AddProblem "DllMinVersion in the configuration file is not a valid version number: """ & sDllMin & _
-            """ (it must be a positive integer, for example 122)."
+        AddProblem "配置文件中 DllMinVersion 不是有效的版本号: """ & sDllMin & _
+            """ (应为正整数, 例如 122)。"
         Exit Function
     End If
 
     g_nDllMinVer = CLng(Val(sDllMin))
     If g_nDllMinVer <= 0 Then
-        AddProblem "DllMinVersion in the configuration file must be a positive integer, but it is """ & sDllMin & """."
+        AddProblem "配置文件中 DllMinVersion 必须为正整数, 当前为 """ & sDllMin & """。"
         Exit Function
     End If
 
@@ -164,11 +173,13 @@ Private Function LoadVersionFromIni() As Boolean
     LoadVersionFromIni = True
 End Function
 
+' 追加一条问题到问题清单 g_sProblems
 Private Sub AddProblem(ByVal sMsg As String)
     If Len(g_sProblems) > 0 Then g_sProblems = g_sProblems & vbCrLf & vbCrLf
-    g_sProblems = g_sProblems & "- " & sMsg
+    g_sProblems = g_sProblems & "· " & sMsg
 End Sub
 
+' LinXi.ini 的第 iIndex 个候选路径 (安装目录 / 宏目录 / 工程目录)
 Private Function CfgCandidatePath(ByVal iIndex As Integer) As String
     Dim sPath As String
 
@@ -194,6 +205,7 @@ Private Function CfgCandidatePath(ByVal iIndex As Integer) As String
     CfgCandidatePath = sPath
 End Function
 
+' 候选路径清单文本, 用于报错时提示宏都去哪里找过
 Private Function CfgCandidateList() As String
     Dim sList As String
     Dim i As Integer
@@ -209,6 +221,7 @@ Private Function CfgCandidateList() As String
     CfgCandidateList = sList
 End Function
 
+' 文件是否存在 (Dir 失败一律按不存在处理)
 Private Function DiskFileExists(ByVal sPath As String) As Boolean
     Dim sHit As String
 
@@ -222,6 +235,7 @@ Private Function DiskFileExists(ByVal sPath As String) As Boolean
     On Error GoTo 0
 End Function
 
+' 按候选顺序定位 LinXi.ini
 Private Function CfgFind() As String
     Dim i As Integer
     Dim sPath As String
@@ -238,6 +252,8 @@ Private Function CfgFind() As String
     Next i
 End Function
 
+' 逐行解析 ini, 取 [Version] 节的 VersionString / VersionLabel / DllMinVersion
+' 注意: 文件必须为 ANSI/GBK 编码, UTF-8 存档会读不到任何键
 Private Function CfgRead(ByVal sPath As String, ByRef sVer As String, _
     ByRef sLbl As String, ByRef sDllMin As String) As Boolean
 
@@ -302,6 +318,8 @@ Private Function CfgRead(ByVal sPath As String, ByRef sVer As String, _
     CfgRead = True
 End Function
 
+' 校验核心计算库: 定位路径、确认文件存在、调用 CCoreVersion 并比对最低版本
+' 返回 DLL_OK / DLL_NOT_FOUND / DLL_CALL_FAIL / DLL_TOO_OLD, 失败原因写入 sNote
 Private Function QueryDllVersion(ByRef nVer As Long, ByRef sNote As String) As Integer
     Dim sDllPath As String
     Dim nErrNum As Long
@@ -315,17 +333,17 @@ Private Function QueryDllVersion(ByRef nVer As Long, ByRef sNote As String) As I
     sDllPath = DllFilePath()
     If Len(sDllPath) = 0 Then
         QueryDllVersion = DLL_NOT_FOUND
-        sNote = "cannot resolve the file path"
-        AddProblem "Cannot resolve the path of the core library " & DLL_FILE_NAME & ": the GetInstallPath call failed."
+        sNote = "无法定位文件路径"
+        AddProblem "无法定位核心计算库 " & DLL_FILE_NAME & " 的路径: GetInstallPath 调用失败。"
         Exit Function
     End If
 
     If Not DiskFileExists(sDllPath) Then
         QueryDllVersion = DLL_NOT_FOUND
-        sNote = "file missing"
-        AddProblem "Core library file not found:" & vbCrLf & _
+        sNote = "文件不存在"
+        AddProblem "未找到核心计算库文件:" & vbCrLf & _
             "    " & sDllPath & vbCrLf & _
-            "    Re-run the installer to deploy it."
+            "    请重新运行安装脚本(双击我自动安装.bat)完成部署。"
         Exit Function
     End If
 
@@ -340,25 +358,26 @@ Private Function QueryDllVersion(ByRef nVer As Long, ByRef sNote As String) As I
 
     If nErrNum <> 0 Or nVer <= 0 Then
         QueryDllVersion = DLL_CALL_FAIL
-        sNote = "call failed"
-        AddProblem "The core library file exists, but the CCoreVersion call failed:" & vbCrLf & _
+        sNote = "调用失败"
+        AddProblem "核心计算库文件存在, 但 CCoreVersion 调用失败:" & vbCrLf & _
             "    Err.Number   = " & CStr(nErrNum) & vbCrLf & _
             "    LastDLLError = " & CStr(nDllErr) & vbCrLf & _
             "    Description  = " & sErrDesc & vbCrLf & _
-            "    Common causes: the DLL is 32-bit (it must be 64-bit) / exported name mismatch / missing dependency."
+            "    常见原因: DLL 为 32 位(应为 64 位) / 导出函数名不匹配 / 依赖库缺失。"
         Exit Function
     End If
 
     If nVer < g_nDllMinVer Then
         QueryDllVersion = DLL_TOO_OLD
-        sNote = "version too old"
-        AddProblem "The core library is too old: currently v" & CStr(nVer) & _
-            ", but this program requires at least v" & CStr(g_nDllMinVer) & vbCrLf & _
-            "    (that requirement is written in DllMinVersion of " & CFG_FILE_NAME & ")"
+        sNote = "版本过旧"
+        AddProblem "核心计算库版本过旧: 当前 v" & CStr(nVer) & _
+            ", 本程序要求不低于 v" & CStr(g_nDllMinVer) & vbCrLf & _
+            "    (该要求写在 " & CFG_FILE_NAME & " 的 DllMinVersion)"
         Exit Function
     End If
 End Function
 
+' 核心计算库的预期路径: <CST安装目录>\AMD64\LinXi.dll
 Private Function DllFilePath() As String
     Dim sPath As String
 
@@ -375,6 +394,7 @@ Private Function DllFilePath() As String
     DllFilePath = sPath
 End Function
 
+' CST 版本号文本, 取不到时返回"(无法获取)"
 Private Function CstVersionText() As String
     Dim sVer As String
 
@@ -387,6 +407,6 @@ Private Function CstVersionText() As String
     On Error GoTo 0
 
     sVer = Trim$(sVer)
-    If Len(sVer) = 0 Then sVer = "(unavailable)"
+    If Len(sVer) = 0 Then sVer = "(无法获取)"
     CstVersionText = sVer
 End Function
