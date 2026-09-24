@@ -70,7 +70,7 @@ OpenBLAS/LAPACK、GSL、Boost、TBB 等），因此不存在因第三方库许�
 | `LinXi.dll` | 本人编译的二进制（源码暂未公开，见第 1 节） |
 | 本仓库全部文档 | 文档 |
 
-    Copyright (c) 2026 她与梦 (She and Me)
+    Copyright (c) 2026 Limorazp
     SPDX-License-Identifier: MIT
 
 许可证全文见仓库根目录 [LICENSE](LICENSE)。在保留版权与许可声明的前提下，上述内容均可
